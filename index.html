@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PSYKPATINTERNA</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #111522;
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  text-align: center;
+}
+h1 {
+  color: #ffd166;
+  margin: 18px 0 4px;
+  letter-spacing: 3px;
+}
+.subtitle { color: #aab4ca; margin: 0 12px 14px; }
+canvas {
+  display: block;
+  width: min(100%, 1000px);
+  height: auto;
+  margin: auto;
+  border: 3px solid #3d4963;
+  border-radius: 12px;
+  background: #344e41;
+}
+.help {
+  color: #c5ccdb;
+  padding: 0 12px;
+  line-height: 1.8;
+}
+kbd {
+  background: #293348;
+  padding: 3px 7px;
+  border-radius: 5px;
+}
+</style>
+</head>
+<body>
+<h1>PSYKPATINTERNA</h1>
+<p class="subtitle">A cartoon bike adventure • Made by Gabbe</p>
+<canvas id="game" width="1000" height="650"></canvas>
+<p class="help">
+<kbd>W</kbd> Pedal · <kbd>S</kbd> Brake / reverse ·
+<kbd>A</kbd><kbd>D</kbd> Steer · <kbd>E</kbd> Enter / interact<br>
+In the bar: <kbd>B</kbd> Drink · <kbd>F</kbd> Water ·
+<kbd>E</kbd> Leave · <kbd>R</kbd> Restart after a crash
+</p>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width;
+const H = canvas.height;
+const keys = new Set();
+
+const bar = { x: 700, y: 115, w: 235, h: 155 };
+const home = { x: 65, y: 115, w: 195, h: 155 };
+const barDoor = { x: 815, y: 302 };
+const homeDoor = { x: 160, y: 302 };
+
+const obstacles = [
+  { x: 350, y: 350, r: 17 },
+  { x: 540, y: 430, r: 17 },
+  { x: 695, y: 540, r: 17 },
+  { x: 265, y: 515, r: 17 },
+  { x: 880, y: 430, r: 17 },
+  { x: 430, y: 570, r: 17 }
+];
+
+const trees = [
+  [35, 130], [310, 150], [390, 210], [490, 150],
+  [610, 190], [970, 165], [40, 580], [950, 580]
+];
+
+let player, coins, state, money, drunk, health;
+let banked, drinks, deliveries, hurtTimer, drinkCooldown;
+let message, messageTimer, elapsed;
+
+function reset() {
+  player = { x: 165, y: 360, angle: 0, speed: 0 };
+  coins = [
+    [240, 350], [440, 315], [610, 350], [780, 370],
+    [920, 510], [790, 590], [590, 550], [470, 475],
+    [340, 580], [170, 520], [90, 410], [640, 465]
+  ].map(([x, y]) => ({ x, y, active: true, respawn: 0 }));
+
+  state = "town";
+  money = 15;
+  drunk = 0;
+  health = 100;
+  banked = 0;
+  drinks = 0;
+  deliveries = 0;
+  hurtTimer = 0;
+  drinkCooldown = 0;
+  elapsed = 0;
+  say("Collect coins, visit the bar, then return HOME!", 7);
+}
+
+function say(text, duration = 3) {
+  message = text;
+  messageTimer = duration;
+}
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function interact() {
+  if (state === "bar") {
+    state = "town";
+    player.x = barDoor.x;
+    player.y = barDoor.y + 35;
+    player.angle = Math.PI / 2;
+    player.speed = 0;
+    say("Back outside. Take it easy!");
+    return;
+  }
+
+  if (state !== "town") return;
+
+  if (distance(player, barDoor) < 75) {
+    state = "bar";
+    player.speed = 0;
+    say("Welcome! B: drink ($5) • F: free water • E: leave", 5);
+  } else if (distance(player, homeDoor) < 75) {
+    if (money > 0) {
+      banked += money;
+      money = 0;
+      deliveries++;
+      say("Home safe! Cash banked. Health and balance restored.", 5);
+    } else {
+      say("Home sweet home. Go collect more coins!", 4);
+    }
+    health = 100;
+    drunk = 0;
+    player.speed = 0;
+  } else {
+    say("Move closer to the BAR or HOME door.");
+  }
+}
+
+window.addEventListener("keydown", event => {
+  const key = event.key.toLowerCase();
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "]
+      .includes(key)) event.preventDefault();
+
+  keys.add(key);
+  if (event.repeat) return;
+
+  if (key === "e") interact();
+  if (key === "r" && state === "gameover") reset();
+
+  if (state === "bar" && key === "b") {
+    if (drinkCooldown > 0) {
+      say("Give it a moment!");
+    } else if (money < 5) {
+      say("You need $5. Collect some coins outside!");
+    } else if (drunk >= 90) {
+      say("Bartender: water for you now!");
+    } else {
+      money -= 5;
+      drunk = Math.min(100, drunk + 23);
+      drinks++;
+      drinkCooldown = 1;
+      say("Cheers! Your bike steering will wobble.");
+    }
+  }
+
+  if (state === "bar" && key === "f") {
+    drunk = Math.max(0, drunk - 25);
+    say("Game water: wobble reduced!");
+  }
+});
+
+window.addEventListener("keyup", event => {
+  keys.delete(event.key.toLowerCase());
+});
+window.addEventListener("blur", () => keys.clear());
+
+function hitsBuilding(x, y, building) {
+  return x > building.x - 14 &&
+         x < building.x + building.w + 14 &&
+         y > building.y - 14 &&
+         y < building.y + building.h + 14;
+}
+
+function crash(damage) {
+  if (hurtTimer > 0) return;
+  health = Math.max(0, health - damage);
+  hurtTimer = 1.1;
+  say("Ouch! Watch the road.");
+  if (health <= 0) {
+    state = "gameover";
+    player.speed = 0;
+  }
+}
+
+function update(dt) {
+  elapsed += dt;
+  messageTimer = Math.max(0, messageTimer - dt);
+  hurtTimer = Math.max(0, hurtTimer - dt);
+  drinkCooldown = Math.max(0, drinkCooldown - dt);
+
+  if (state === "gameover") return;
+  drunk = Math.max(0, drunk - dt * 0.65);
+
+  for (const coin of coins) {
+    if (!coin.active) {
+      coin.respawn -= dt;
+      if (coin.respawn <= 0) coin.active = true;
+    }
+  }
+
+  if (state !== "town") return;
+
+  const forward = keys.has("w") || keys.has("arrowup");
+  const backward = keys.has("s") || keys.has("arrowdown");
+  const left = keys.has("a") || keys.has("arrowleft");
+  const right = keys.has("d") || keys.has("arrowright");
+
+  if (forward) player.speed += 155 * dt;
+  if (backward) player.speed -= 210 * dt;
+  player.speed *= Math.exp(-1.1 * dt);
+  player.speed = Math.max(-75, Math.min(220, player.speed));
+
+  const movement = Math.min(1, Math.abs(player.speed) / 45);
+  const direction = player.speed >= 0 ? 1 : -1;
+  player.angle += (Number(right) - Number(left)) *
+                  2.65 * movement * direction * dt;
+  player.angle += Math.sin(elapsed * 3.8) *
+                  (drunk / 100) * 1.8 * movement * dt;
+
+  const previousX = player.x;
+  const previousY = player.y;
+  player.x += Math.cos(player.angle) * player.speed * dt;
+  player.y += Math.sin(player.angle) * player.speed * dt;
+
+  const blocked =
+    player.x < 20 || player.x > W - 20 ||
+    player.y < 110 || player.y > H - 25 ||
+    hitsBuilding(player.x, player.y, bar) ||
+    hitsBuilding(player.x, player.y, home);
+
+  if (blocked) {
+    player.x = previousX;
+    player.y = previousY;
+    if (Math.abs(player.speed) > 65) crash(10);
+    player.speed *= -0.25;
+  }
+
+  for (const obstacle of obstacles) {
+    if (distance(player, obstacle) < obstacle.r + 17) {
+      player.x = previousX;
+      player.y = previousY;
+      if (Math.abs(player.speed) > 35) crash(15);
+      player.speed *= -0.4;
+    }
+  }
+
+  for (const coin of coins) {
+    if (coin.active && distance(player, coin) < 27) {
+      coin.active = false;
+      coin.respawn = 18;
+      money += 5;
+      say("+$5", 1);
+    }
+  }
+}
+
+function rect(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w, h);
+}
+
+function text(value, x, y, size = 20, color = "#fff", align = "left") {
+  ctx.fillStyle = color;
+  ctx.font = `bold ${size}px system-ui, sans-serif`;
+  ctx.textAlign = align;
+  ctx.fillText(value, x, y);
+}
+
+function circle(x, y, radius, color) {
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function building(b, color, label, door) {
+  rect(b.x + 8, b.y + 10, b.w, b.h, "#17252b");
+  rect(b.x, b.y, b.w, b.h, color);
+  rect(b.x - 8, b.y, b.w + 16, 20, "#263044");
+  rect(b.x + 18, b.y + 65, 46, 43, "#ffdc8c");
+  rect(b.x + b.w - 64, b.y + 65, 46, 43, "#ffdc8c");
+  rect(door.x - 20, b.y + b.h - 54, 40, 54, "#202334");
+  rect(door.x - 28, b.y + b.h, 56, 35, "#aaa38b");
+  text(label, b.x + b.w / 2, b.y + 48, 24, "#fff", "center");
+  text("E", door.x, door.y + 5, 18, "#ffd166", "center");
+}
+
+function drawBike() {
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  ctx.rotate(player.angle);
+
+  if (hurtTimer > 0 && Math.floor(elapsed * 14) % 2 === 0) {
+    ctx.globalAlpha = 0.4;
+  }
+
+  rect(-23, -5, 15, 10, "#101420");
+  rect(10, -5, 15, 10, "#101420");
+  rect(-15, -2, 34, 4, "#cbd5e1");
+  rect(13, -13, 4, 26, "#d7e5ed");
+  circle(-2, 0, 13, "#f06c9b");
+  circle(5, 0, 8, "#ffd0a9");
+  rect(8, -7, 4, 14, "#202535");
+  ctx.restore();
+}
+
+function drawTown() {
+  rect(0, 0, W, H, "#42634d");
+  rect(0, 320, W, 105, "#485363");
+  rect(105, 295, 110, 355, "#485363");
+  rect(760, 295, 110, 355, "#485363");
+  rect(105, 505, 765, 110, "#485363");
+
+  ctx.strokeStyle = "#e8d9a477";
+  ctx.lineWidth = 3;
+  ctx.setLineDash([22, 22]);
+  ctx.beginPath();
+  ctx.moveTo(0, 373);
+  ctx.lineTo(W, 373);
+  ctx.moveTo(160, 425);
+  ctx.lineTo(160, H);
+  ctx.moveTo(815, 425);
+  ctx.lineTo(815, H);
+  ctx.moveTo(215, 560);
+  ctx.lineTo(760, 560);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  for (const [x, y] of trees) {
+    rect(x - 5, y, 10, 30, "#735139");
+    circle(x, y, 24, "#243e36");
+    circle(x - 6, y - 7, 17, "#345543");
+  }
+
+  building(home, "#4b79a1", "HOME", homeDoor);
+  building(bar, "#a44c66", "THE WOBBLY BAR", barDoor);
+
+  text("PSYKPATINTERNA", 480, 263, 20, "#d7e7cd", "center");
+
+  for (const coin of coins) {
+    if (!coin.active) continue;
+    const bob = Math.sin(elapsed * 4 + coin.x) * 3;
+    circle(coin.x, coin.y + bob, 11, "#f9bd38");
+    text("$", coin.x, coin.y + bob + 5, 15, "#765016", "center");
+  }
+
+  for (const obstacle of obstacles) {
+    rect(obstacle.x - 15, obstacle.y + 10, 30, 6, "#222a37");
+    ctx.beginPath();
+    ctx.moveTo(obstacle.x, obstacle.y - 19);
+    ctx.lineTo(obstacle.x - 12, obstacle.y + 11);
+    ctx.lineTo(obstacle.x + 12, obstacle.y + 11);
+    ctx.closePath();
+    ctx.fillStyle = "#ff8a42";
+    ctx.fill();
+    rect(obstacle.x - 6, obstacle.y - 1, 12, 5, "#fff1df");
+  }
+
+  drawBike();
+
+  if (distance(player, barDoor) < 75) {
+    text("E: Enter bar", 815, 335, 17, "#fff", "center");
+  } else if (distance(player, homeDoor) < 75) {
+    text("E: Bank cash & rest", 160, 335, 17, "#fff", "center");
+  }
+}
+
+function drawBar() {
+  rect(0, 95, W, H, "#302134");
+  for (let y = 115; y < H; y += 48) {
+    rect(0, y, W, 2, "#493046");
+  }
+
+  text("THE WOBBLY BAR", W / 2, 165, 42, "#ffb3d4", "center");
+  text("Parked your bike outside. Welcome in!", W / 2, 201,
+       18, "#ccb6ca", "center");
+
+  rect(170, 240, 660, 110, "#774b3f");
+  rect(150, 235, 700, 20, "#c08a62");
+
+  for (let i = 0; i < 7; i++) {
+    rect(215 + i * 88, 212, 13, 23, i % 2 ? "#86c6a0" : "#e4bd66");
+  }
+
+  circle(500, 222, 25, "#ffd0aa");
+  rect(477, 237, 46, 30, "#f0efe7");
+  rect(475, 191, 50, 13, "#20202c");
+
+  for (const x of [285, 500, 715]) {
+    circle(x, 395, 26, "#ab526b");
+    rect(x - 4, 417, 8, 28, "#b2a4a0");
+  }
+
+  text("B — Buy a drink: $5", W / 2, 480, 27, "#ffd166", "center");
+  text("F — Free game water: reduce wobble", W / 2, 522,
+       22, "#8fe0df", "center");
+  text("E — Leave the bar", W / 2, 562, 22, "#fff", "center");
+  text("Cartoon rules: real water does not sober you up.",
+       W / 2, 601, 15, "#bca9bc", "center");
+}
+
+function meter(x, label, value, color) {
+  text(label, x, 62, 13, "#b9c4da");
+  rect(x, 70, 160, 10, "#303b50");
+  rect(x, 70, 160 * Math.max(0, Math.min(100, value)) / 100, 10, color);
+}
+
+function drawHud() {
+  rect(0, 0, W, 96, "#161d2e");
+  text("CASH $" + money, 22, 34, 23, "#ffd166");
+  text("BANKED $" + banked, 230, 34, 23, "#8ce0bd");
+  text("DRINKS " + drinks, 500, 34, 20, "#efb3ce");
+  text("HOME RUNS " + deliveries, 735, 34, 20, "#b6c8ff");
+  meter(22, "HEALTH " + Math.ceil(health), health, "#72d5a4");
+  meter(230, "WOBBLE " + Math.ceil(drunk) + "%", drunk, "#f39bbd");
+  text("Collect • Explore • Get home", 500, 77, 17, "#b9c4da");
+}
+
+function draw() {
+  if (state === "bar") drawBar();
+  else drawTown();
+  drawHud();
+
+  if (messageTimer > 0 && state !== "gameover") {
+    rect(45, H - 40, W - 90, 32, "#111827ed");
+    text(message, W / 2, H - 18, 16, "#fff", "center");
+  }
+
+  if (state === "gameover") {
+    rect(0, 0, W, H, "#0c1020dc");
+    text("BIKE WRECKED!", W / 2, 250, 54, "#ff8296", "center");
+    text("Banked: $" + banked + " • Drinks: " + drinks,
+         W / 2, 310, 26, "#fff", "center");
+    text("Press R to try again", W / 2, 375, 27, "#ffd166", "center");
+  }
+}
+
+reset();
+let previousTime = null;
+
+function frame(time) {
+  const dt = previousTime === null
+    ? 0 : Math.min((time - previousTime) / 1000, 0.04);
+  previousTime = time;
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
